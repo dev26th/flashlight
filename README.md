@@ -4,6 +4,8 @@ A firmware for flashlight driver based on ATtiny13A.
 
 Public domain - see file UNLICENSE.
 
+Status: **beta**.
+
 ##Hardware
 
 Designed for power button (not tact one), one Li-Ion cell. 
@@ -22,6 +24,16 @@ Designed for power button (not tact one), one Li-Ion cell.
 Tree modes: 0.35A, 0.7A, 1.05A. No PWM. Quick off-on to switch to next mode. Remembers last selected mode.
 
 Will go periodically off for half a second if battery is low (< 3.5V) and power off in battery is empty (< 3.0V). But exact voltage may very for different chips.
+
+##Calibration
+
+You can define your own battery low and empty levels.
+
+1. Switch the flashlight off. 
+2. Short PB2 to GND (to calibrate battery empty level) or to VCC (to calibrate battery low level). 
+3. Switch the flashlight on. It starts to blink. 
+4. Release the PB2. Flashlight binks slower.
+5. Calibration is done.
 
 ##Programming
 
