@@ -8,8 +8,11 @@ flashlight.elf: flashlight.c
 program: flashlight.hex
 	avrdude -p t13 -c usbasp -U flash:w:flashlight.hex
 
+fuses:
+	avrdude -B 128 -p t13 -c usbasp -U lfuse:w:0x7a:m -U hfuse:w:0xff:m
+
 clean:
 	rm flashlight.elf flashlight.hex
 
-.PHONY: hex elf clean
+.PHONY: hex elf clean fuses
 

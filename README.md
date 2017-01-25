@@ -10,7 +10,7 @@ Status: **beta**.
 
 Designed for power button (not tact one), one Li-Ion cell. 
 
-![Schematic](/home/dev/prog/flashlight/docs/Main.png) 
+![Schematic](docs/Main.png) 
 
 - PB0 - one AMC7135
 - PB1- two AMC7135's
