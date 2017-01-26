@@ -282,7 +282,7 @@ int main(void) {
                     poweroff();
                 }
                 else if(BatLevel_Low == bat_level) {
-                    bat_warn = 255; // begin warn cycle
+                    bat_warn = 6; // begin warn cycle with blink
                     leds_mode = 1;  // force low-mode
                 }
             }
