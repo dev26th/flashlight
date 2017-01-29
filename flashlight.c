@@ -9,22 +9,49 @@
 #include <avr/sleep.h>
 #include <util/delay.h>
 
+// == config begin ============================================================
+
+#define ENABLE_CALIBRATION 0
+#define ENABLE_UART        0
+#define ENABLE_SPECIAL     1
+
+#define DEFAULT_BAT_EMPTY  0x87 // ~3.0V
+#define DEFAULT_BAT_MIN    0x92 // ~3.2V
+#define DEFAULT_BAT_LOW    0x9e // ~3.5V
+
+#define CLICK_TIMEOUT 10   // unit is 50 msec
+
+// == config end ==============================================================
+
 #define OFFTIME PB4
 #define LED1    PB0
 #define LED2    PB1
 #define BAT     PB2
 #define BAT_MUX MUX0
 
-#define DEFAULT_BAT_EMPTY  0x87 // ~3.0V
-#define DEFAULT_BAT_LOW    0x9e // ~3.5V
+#define EEPROM_BAT_EMPTY_ADDR  ((uint8_t*)0)
+#define EEPROM_BAT_MIN_ADDR    ((uint8_t*)1)
+#define EEPROM_BAT_LOW_ADDR    ((uint8_t*)2)
+#define EEPROM_MODE_ADDR       ((uint8_t*)3)
+#define EEPROM_CLICK_ADDR      ((uint8_t*)4)
 
-#define EEPROM_MODE_ADDR       ((uint8_t*)12)
-#define EEPROM_BAT_EMPTY_ADDR  ((uint8_t*)13)
-#define EEPROM_BAT_LOW_ADDR    ((uint8_t*)14)
+#define LEDS_MODE_OFF    0
+#define LEDS_MODE_MOON   1
+#define LEDS_MODE_LOW    2
+#define LEDS_MODE_MED    3
+#define LEDS_MODE_HIGH   4
+#define LEDS_MODE_BEACON 11
+#define LEDS_MODE_STROBE 12
+#define LEDS_MODE_SOS    13
+#define LEDS_MODE_NORMAL_MIN   LEDS_MODE_MOON
+#define LEDS_MODE_NORMAL_MAX   LEDS_MODE_HIGH
+#define LEDS_MODE_SPECIAL_MIN  LEDS_MODE_BEACON
+#define LEDS_MODE_SPECIAL_MAX  LEDS_MODE_SOS
 
 enum BatLevel {
     BatLevel_Good,
     BatLevel_Low,
+    BatLevel_Min,
     BatLevel_Empty
 };
 typedef enum BatLevel BatLevel_t;
@@ -32,21 +59,26 @@ typedef enum BatLevel BatLevel_t;
 static uint8_t    leds_mode;
 static BatLevel_t bat_level;
 static uint8_t    bat_empty_level;
+static uint8_t    bat_min_level;
 static uint8_t    bat_low_level;
 
-/*
+// == UART ====================================================================
+
 #define UART_BAUD    115200                 // do not use too low rates
 #define UART_DELAY   (F_CPU/3/UART_BAUD-1)  // the result delay must be [1..255]
 #define UART_TX_DDR  DDRB
 #define UART_TX_PORT PORTB
 #define UART_TX_PIN  PB3
 
-void uart_init() {
+static inline void uart_init() {
+#if ENABLE_UART
     UART_TX_DDR  |= (1 << UART_TX_PIN);
     UART_TX_PORT |= (1 << UART_TX_PIN);
+#endif
 }
 
 void uart_send_byte(uint8_t b) {
+#if ENABLE_UART
     __asm__ volatile(
         "cbi %[port], %[pin]  ; start bit"                     "\n\t" // 2
         "adiw r26, 0          ; dummy to balance start"        "\n\t" // 2
@@ -70,15 +102,27 @@ void uart_send_byte(uint8_t b) {
         : [d] "r"(UART_DELAY), [b] "r"(b), [port] "I"(_SFR_IO_ADDR(UART_TX_PORT)), [pin] "I"(UART_TX_PIN)
         : "r26", "r18", "r19"
     );
+#endif
 }
 
 void uart_send_str(const char* s) {
+#if ENABLE_UART
     for(; *s; ++s)
         uart_send_byte(*s);
+#endif
 }
-*/
 
-static inline bool get_offtime() {
+void uart_send_hex(uint8_t n) {
+#if ENABLE_UART
+    static const char DIGITS[] = "0123456789ABCDEF";
+    uart_send_byte(DIGITS[n >> 4]);
+    uart_send_byte(DIGITS[n & 0x0F]);
+#endif
+}
+
+// == mode management =========================================================
+
+static inline bool is_short_click() {
     // check off-time and change the capacitor afterwards
     DDRB &= ~(1 << OFFTIME);
     PORTB &= ~(1 << OFFTIME);
@@ -96,6 +140,83 @@ static inline void offtime_disable() {
     PORTB &= ~(1 << OFFTIME);
 }
 
+static inline bool is_in_normal_mode() {
+    return (leds_mode >= LEDS_MODE_NORMAL_MIN) && (leds_mode <= LEDS_MODE_NORMAL_MAX);
+}
+
+static inline bool is_in_special_mode() {
+    return (leds_mode >= LEDS_MODE_SPECIAL_MIN) && (leds_mode <= LEDS_MODE_SPECIAL_MAX);
+}
+
+static inline void next_leds_mode() {
+    bool special = is_in_special_mode();
+    ++leds_mode;
+    if(special) {
+        if(leds_mode > LEDS_MODE_SPECIAL_MAX)
+            leds_mode = LEDS_MODE_SPECIAL_MIN;
+    }
+    else {
+        if(leds_mode > LEDS_MODE_NORMAL_MAX)
+            leds_mode = LEDS_MODE_NORMAL_MIN;
+    }
+}
+
+static inline void load_leds_mode() {
+    leds_mode = eeprom_read_byte(EEPROM_MODE_ADDR);
+    if(!is_in_normal_mode() && !is_in_special_mode()) leds_mode = LEDS_MODE_NORMAL_MIN;
+}
+
+static inline void save_leds_mode() {
+    eeprom_write_byte(EEPROM_MODE_ADDR, leds_mode);
+}
+
+// == LEDs management =========================================================
+
+static inline void leds_init() {
+    // pins for the LEDs
+    DDRB  |=   (1 << LED1) | (1 << LED2);
+    PORTB &= ~((1 << LED1) | (1 << LED2));
+}
+
+static inline void start_pwm(uint8_t val) {
+    TCNT0  = 0;
+    TCCR0B = (1 << CS01); // prescaler 8
+    TCCR0A = (1 << COM0A1) | (1 << WGM01) | (1 << WGM00);
+    OCR0A  = val;
+}
+
+static inline void stop_pwm() {
+    TCCR0A = 0;
+}
+
+static void set_leds(uint8_t mode) {
+    uint8_t reg = PORTB;
+    reg &= ~((1 << LED1) | (1 << LED2));
+    stop_pwm();
+    switch(mode) {
+        case LEDS_MODE_MOON: start_pwm(1); break;
+        case LEDS_MODE_LOW:  reg |= (1 << LED1); break;
+        case LEDS_MODE_MED:  reg |= (1 << LED2); break;
+        case LEDS_MODE_HIGH: reg |= (1 << LED1) | (1 << LED2); break;
+    }
+    PORTB = reg;
+}
+
+void leds_restore() {
+    set_leds(leds_mode);
+}
+
+static inline void poweroff() {
+    set_leds(LEDS_MODE_OFF);
+    offtime_disable();
+    set_sleep_mode(SLEEP_MODE_PWR_DOWN);
+    while(true) {
+        sleep_mode();
+    }
+}
+
+// == battery measurement =====================================================
+
 static inline void battery_init() {
     // ADC for battery level
     ADMUX |= (1 << REFS0) | (1 << BAT_MUX); // use internal ref
@@ -105,7 +226,7 @@ static inline void battery_init() {
     ADCSRA |= (1 << ADPS1) | (1 << ADPS0) | (1 << ADEN);
 }
 
-static uint8_t get_battery_direct() {
+static inline uint8_t get_battery_direct() {
     ADCSRA |= (1 << ADSC);
     while(ADCSRA & (1 << ADSC));
 
@@ -113,7 +234,7 @@ static uint8_t get_battery_direct() {
 }
 
 // filtered
-static uint8_t get_battery() {
+static inline uint8_t get_battery() {
     static uint16_t battery_reg = 0;
 
     ADCSRA |= (1 << ADSC);
@@ -126,67 +247,42 @@ static uint8_t get_battery() {
     return (battery_reg >> 4);
 }
 
-static inline void leds_init() {
-    // pins for the LEDs
-    DDRB  |=   (1 << LED1) | (1 << LED2);
-    PORTB &= ~((1 << LED1) | (1 << LED2));
+static inline void load_bat_levels() {
+    //eeprom_write_byte(EEPROM_BAT_EMPTY_ADDR, 0x7A);
+    //eeprom_write_byte(EEPROM_BAT_MIN_ADDR, 0x83);
+    //eeprom_write_byte(EEPROM_BAT_LOW_ADDR, 0x8C);
+
+    bat_empty_level = eeprom_read_byte(EEPROM_BAT_EMPTY_ADDR);
+    if(bat_empty_level == 0xFF) bat_empty_level = DEFAULT_BAT_EMPTY;
+
+    bat_min_level = eeprom_read_byte(EEPROM_BAT_MIN_ADDR);
+    if(bat_min_level == 0xFF) bat_min_level = DEFAULT_BAT_MIN;
+
+    bat_low_level = eeprom_read_byte(EEPROM_BAT_LOW_ADDR);
+    if(bat_low_level == 0xFF) bat_low_level = DEFAULT_BAT_LOW;
+
+    uart_send_hex(bat_empty_level);
+    uart_send_hex(bat_min_level);
+    uart_send_hex(bat_low_level);
 }
 
-void next_leds_mode() {
-    ++leds_mode;
-    if(leds_mode > 3) leds_mode = 1;
-}
-
-static inline void load_leds_mode() {
-    leds_mode = eeprom_read_byte(EEPROM_MODE_ADDR);
-    if(leds_mode < 1 || leds_mode > 3) leds_mode = 1;
-}
-
-static inline void save_leds_mode() {
-    eeprom_write_byte(EEPROM_MODE_ADDR, leds_mode);
-}
-
-static void set_leds(uint8_t mode) {
-    uint8_t reg = PORTB;
-    reg &= ~((1 << LED1) | (1 << LED2));
-    switch(mode) {
-        case 1: reg |= (1 << LED1); break;
-        case 2: reg |= (1 << LED2); break;
-        case 3: reg |= (1 << LED1) | (1 << LED2); break;
-    }
-    PORTB = reg;
-}
-
-static inline void leds_off() {
-    set_leds(0);
-}
-
-void leds_restore() {
-    set_leds(leds_mode);
-}
-
-static void poweroff() {
-    leds_off();
-    offtime_disable();
-    set_sleep_mode(SLEEP_MODE_PWR_DOWN);
-    while(true) {
-        sleep_mode();
-    }
-}
-
+#if ENABLE_CALIBRATION
 static inline void battery_calibrate() {
     uint8_t cal = get_battery_direct(); // which level to calibrate?
     uint8_t bat;
 
     // wait for calibration start
     do {
-        set_leds(0);
+        set_leds(LEDS_MODE_OFF);
         _delay_ms(20);
-        set_leds(1);
+        set_leds(LEDS_MODE_LOW);
         _delay_ms(20);
         bat = get_battery_direct();
     }
     while(bat == 0 || bat == 0xFF);
+
+    // set LEDs to same mode as it will be done during test
+    if(!bat) set_leds(LEDS_MODE_OFF);
 
     // loop to clear the filter
     for(uint8_t i = 0; i < 16; ++i) {
@@ -200,24 +296,33 @@ static inline void battery_calibrate() {
     else
         eeprom_write_byte(EEPROM_BAT_LOW_ADDR, bat);
 
+    // min: mean value of low and empty
+    load_bat_levels();
+    eeprom_write_byte(EEPROM_BAT_MIN_ADDR, ((bat_low_level - bat_empty_level) >> 1) + bat_empty_level);
+
     // wait for switch off
     while(true) {
-        set_leds(1);
+        set_leds(LEDS_MODE_LOW);
         _delay_ms(200);
-        set_leds(0);
+        set_leds(LEDS_MODE_OFF);
         _delay_ms(200);
     }
 }
+#endif
 
 static inline void check_bat_calibrate() {
+#if ENABLE_CALIBRATION
     uint8_t cal = get_battery_direct();
     if(cal == 0 || cal == 0xFF)
         battery_calibrate(); // will never return
+#endif
 }
 
-BatLevel_t to_bat_level(uint8_t bat) {
+static inline BatLevel_t to_bat_level(uint8_t bat) {
     if(bat <= bat_empty_level)
         return BatLevel_Empty;
+    else if(bat <= bat_min_level)
+        return BatLevel_Min;
     else if(bat <= bat_low_level)
         return BatLevel_Low;
     else
@@ -225,35 +330,100 @@ BatLevel_t to_bat_level(uint8_t bat) {
 }
 
 static inline bool check_bat_level() { 
-    BatLevel_t new_level = to_bat_level(get_battery());
+    uint8_t b = get_battery();
+    uart_send_str("b");
+    uart_send_hex(b);
+    uart_send_str("\r\n");
+
+    BatLevel_t new_level = to_bat_level(b);
     if(new_level == bat_level) return false; // no changes - no more checks
 
     // recheck; expect battery level will be only worse
-    set_leds(1); // same mode as used for calibration
-    _delay_ms(1);
-    new_level = to_bat_level(get_battery());
-    leds_restore();
+
+    // same mode as was used for calibration
+    bool rest = false;
+    if(leds_mode >= LEDS_MODE_LOW) {
+        set_leds(LEDS_MODE_LOW);
+        _delay_us(100);
+        rest = true;
+    }
+
+    b = get_battery_direct();
+    new_level = to_bat_level(b);
+    uart_send_str("b ");
+    uart_send_hex(b);
+    uart_send_str("\r\n");
+
+
+    if(rest)
+        leds_restore();
+
     if(new_level <= bat_level) return false; // false alarm
 
     bat_level = new_level;
+
+    uart_send_str("L");
+    uart_send_hex(bat_level);
+    uart_send_str("\r\n");
+
     return true;
 }
 
-static inline void load_bat_levels() {
-    bat_empty_level = eeprom_read_byte(EEPROM_BAT_EMPTY_ADDR);
-    if(bat_empty_level == 0xFF) bat_empty_level = DEFAULT_BAT_EMPTY;
+// == special modes ===========================================================
 
-    bat_low_level = eeprom_read_byte(EEPROM_BAT_LOW_ADDR);
-    if(bat_low_level == 0xFF) bat_low_level = DEFAULT_BAT_LOW;
+#if ENABLE_SPECIAL
+static inline void process_beacon(uint8_t count) {
+    count &= 0x3F;
+    if(count)
+        set_leds(LEDS_MODE_OFF);
+    else
+        set_leds(LEDS_MODE_HIGH);
 }
+
+static inline void process_strobe(uint8_t count) {
+    count &= 0x01;
+    if(count)
+        set_leds(LEDS_MODE_OFF);
+    else
+        set_leds(LEDS_MODE_HIGH);
+}
+
+static inline void process_sos(uint8_t count) {
+    static const uint8_t SIGNAL[] = { 0b01010101, 0b11011101, 0b11010101, 0b00000000 };
+    static uint8_t pos = 0;
+
+    if(count & 0x07) return; //no changes, e.g. one unit ~ 0.4 sec
+
+    uint8_t v = ((SIGNAL[pos >> 3]) >> (7 - (pos & 0x07))) & 0x01;
+    pos = (pos + 1) & 0x1F;
+
+    if(v)
+        set_leds(LEDS_MODE_HIGH);
+    else
+        set_leds(LEDS_MODE_OFF);
+}
+#endif
+
+static inline void process_special_mode(uint8_t count) {
+#if ENABLE_SPECIAL
+    switch(leds_mode) {
+        case LEDS_MODE_BEACON: process_beacon(count); break;
+        case LEDS_MODE_STROBE: process_strobe(count); break;
+        case LEDS_MODE_SOS:    process_sos(count);    break;
+    }
+#endif
+}
+
+// ============================================================================
 
 int main(void) {
     // init
-    //uart_init();
-    bool offtime = get_offtime();
+    uart_init();
+    bool short_click = is_short_click();
     leds_init();
     battery_init();
 
+    uart_send_str("S\r\n");
     check_bat_calibrate();
     load_bat_levels();
 
@@ -263,40 +433,76 @@ int main(void) {
     }
 
     // check mode switch
+    uint8_t clicks = 0;
+    bool leds_mode_changed = false;
     load_leds_mode();
-    if(offtime) { // it was a click
-        next_leds_mode();
-        save_leds_mode();
+    if(short_click) {
+        // count clicks
+        clicks = eeprom_read_byte(EEPROM_CLICK_ADDR);
+        ++clicks;
+        eeprom_write_byte(EEPROM_CLICK_ADDR, clicks);
+
+        if(clicks == 1) {
+            next_leds_mode();
+            leds_mode_changed = true;
+        }
+#if ENABLE_SPECIAL
+        else if(clicks == 2) {
+            if(is_in_special_mode())
+                leds_mode = LEDS_MODE_NORMAL_MIN;
+            else
+                leds_mode = LEDS_MODE_SPECIAL_MIN;
+            leds_mode_changed = true;
+        }
+#endif
     }
     leds_restore();
 
     uint8_t count = 0;
-    uint8_t bat_warn;
+    uint8_t time  = 0;
+    uint8_t bat_warn = 255;
     while(1) {
         ++count;
+        if(time != 255) ++time;
+
+        if(time == CLICK_TIMEOUT) {
+            if(clicks)    // reset click counter
+                eeprom_write_byte(EEPROM_CLICK_ADDR, 0);
+            if(leds_mode_changed)
+                save_leds_mode();
+        }
 
         get_battery(); // force filtering of battery level
-        if((count & 0x0F) == 0) { // only every ~1.6 sec
-            if(check_bat_level()) {
+        if((count & 0x1F) == 0) { // only every ~1.6 sec
+            if(check_bat_level()) { // battery can only go down
                 if(BatLevel_Empty == bat_level) {
                     poweroff();
                 }
-                else if(BatLevel_Low == bat_level) {
-                    bat_warn = 6; // begin warn cycle with blink
-                    leds_mode = 1;  // force low-mode
+                else {
+                    if(!is_in_special_mode()) {
+                        bat_warn = 6; // begin warn cycle with blink
+                        // force low-mode
+                        if(BatLevel_Min == bat_level)
+                            leds_mode = LEDS_MODE_MOON;
+                        else
+                            leds_mode = LEDS_MODE_LOW;
+                    }
                 }
             }
         }
 
-        if(BatLevel_Low == bat_level) {
+        if(is_in_special_mode()) {
+            process_special_mode(count);
+        }
+        else if(BatLevel_Good != bat_level) {
             --bat_warn;
             if((bat_warn < 2) || (bat_warn >= 4 && bat_warn < 6))
-                leds_off();
+                set_leds(LEDS_MODE_OFF);
             else
                 leds_restore();
         }
 
-        _delay_ms(100);
+       _delay_ms(50);
     }
 
     return 0;

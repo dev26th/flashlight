@@ -8,7 +8,7 @@ Status: **beta**.
 
 ##Hardware
 
-Designed for power button (not tact one), one Li-Ion cell. 
+Designed for power button (not tact one) and one Li-Ion cell. 
 
 ![Schematic](docs/Main.png) 
 
@@ -21,13 +21,15 @@ Designed for power button (not tact one), one Li-Ion cell.
 
 ##Handling
 
-Tree modes: 0.35A, 0.7A, 1.05A. No PWM. Quick off-on to switch to next mode. Remembers last selected mode.
+Four main modes: 3.5mA, 0.35A, 0.7A, 1.05A. Quick off-on to switch to next mode. Remembers last selected mode.
 
-Will blink periodically if battery is low (< 3.5V) and power off in battery is empty (< 3.0V). But exact voltage may very for different chips.
+Quick double off-on to go to special modes: beacon, strobe and SOS. Quick double off-on again to return to main modes loop.
+
+Will go to 0.35A mode automatically and blink periodically if battery is low (< 3.5V), then go to minimum mode (< 3.2V) and later power off when battery is empty (< 3.0V). But exact voltage may very for different chips.
 
 ##Calibration
 
-You can define your own battery low and empty levels.
+You can define your own battery low and empty levels, if your recompile the firmware with ENABLE_CALIBRATION=1. Then:
 
 1. Switch the flashlight off. 
 2. Short PB2 to GND (to calibrate battery empty level) or to VCC (to calibrate battery low level). 
@@ -35,8 +37,10 @@ You can define your own battery low and empty levels.
 4. Release the PB2. Flashlight binks slower.
 5. Calibration is done.
 
+Or just define your values in code.
+
 ##Programming
 
 Fuses (avrdude format):
 
->-U lfuse:w:0x7a:m -U hfuse:w:0xff:m
+>-U lfuse:w:0x3a:m -U hfuse:w:0xff:m
