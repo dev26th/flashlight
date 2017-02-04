@@ -1,2 +1,4 @@
 *.elf
 *.swp
+f*.eeprom.bin
+dump.eeprom.bin
