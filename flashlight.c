@@ -485,7 +485,6 @@ int main(void) {
     uint8_t time  = 0;
     uint8_t bat_warn = 255;
     while(1) {
-        ++count;
         if(time != 255) ++time;
 
         if(time == CLICK_TIMEOUT) {
@@ -525,6 +524,7 @@ int main(void) {
                 leds_restore();
         }
 
+        ++count;
        delay(50);
     }
 
