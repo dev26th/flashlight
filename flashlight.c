@@ -14,10 +14,10 @@
 #define ENABLE_UART        0
 #define ENABLE_SPECIAL     1
 
-#define DEFAULT_BAT_EMPTY  0x87 // ~3.0V
-#define DEFAULT_BAT_MIN    0x92 // ~3.2V
-#define DEFAULT_BAT_LOW    0x9e // ~3.5V
-#define DEFAULT_BAT_DELTA  0x08 // for each .35 A
+#define DEFAULT_BAT_EMPTY  0x7A // ~3.0V
+#define DEFAULT_BAT_MIN    0x84 // ~3.2V
+#define DEFAULT_BAT_LOW    0x8F // ~3.5V
+#define DEFAULT_BAT_DELTA  0x09 // for each .35 A
 
 #define CLICK_TIMEOUT 7   // unit is 50 msec
 
@@ -382,8 +382,8 @@ static inline bool check_bat_level() {
     uart_send_str("\r\n");
 
     BatLevel_t new_level = to_bat_level(b);
-    if(new_level == bat_level) {
-        return false; // no changes
+    if(new_level <= bat_level) { // expect only battery discharging
+        return false;
     }
     else {
         bat_level = new_level;
