@@ -10,6 +10,7 @@
 
 // == config begin ============================================================
 
+#define HARDWARE           3   // how many AMC7135's: 3 or 6
 #define ENABLE_CALIBRATION 0
 #define ENABLE_UART        0
 #define ENABLE_SPECIAL     1
@@ -24,8 +25,16 @@
 // == config end ==============================================================
 
 #define OFFTIME PB4
+
+#if HARDWARE==6
+#define LED1    PB0
+#define LED2    PB3
+#define LED3    PB1
+#else
 #define LED1    PB0
 #define LED2    PB1
+#endif
+
 #define BAT     PB2
 #define BAT_MUX MUX0
 
@@ -48,6 +57,12 @@
 #define LEDS_MODE_NORMAL_MAX   LEDS_MODE_HIGH
 #define LEDS_MODE_SPECIAL_MIN  LEDS_MODE_BEACON
 #define LEDS_MODE_SPECIAL_MAX  LEDS_MODE_SOS
+
+#if HARDWARE==6
+#define LEDS_MODE_TURBO  5
+#undef  LEDS_MODE_NORMAL_MAX
+#define LEDS_MODE_NORMAL_MAX   LEDS_MODE_TURBO
+#endif
 
 #define CAL_LOW   0x10
 #define CAL_HIGH  0xF0
@@ -198,11 +213,19 @@ static inline void save_leds_mode() {
 
 // == LEDs management =========================================================
 
+#if HARDWARE==6
+static inline void leds_init() {
+    // pins for the LEDs
+    DDRB  |=   (1 << LED1) | (1 << LED2) | (1 << LED3);
+    PORTB &= ~((1 << LED1) | (1 << LED2) | (1 << LED3));
+}
+#else
 static inline void leds_init() {
     // pins for the LEDs
     DDRB  |=   (1 << LED1) | (1 << LED2);
     PORTB &= ~((1 << LED1) | (1 << LED2));
 }
+#endif
 
 static inline void start_pwm(uint8_t val) {
     TCNT0  = 0;
@@ -215,6 +238,22 @@ static inline void stop_pwm() {
     TCCR0A = 0;
 }
 
+#if HARDWARE==6
+static void set_leds(uint8_t mode) {
+    uint8_t reg = PORTB;
+    reg &= ~((1 << LED1) | (1 << LED2) | (1 << LED3));
+    stop_pwm();
+    switch(mode) {
+        case LEDS_MODE_MOON:  start_pwm(1); break;
+        case LEDS_MODE_LOW:   reg |= (1 << LED1); break;
+        case LEDS_MODE_MED:   reg |= (1 << LED2); break;
+        case LEDS_MODE_HIGH:  reg |= (1 << LED3); break;
+        case LEDS_MODE_TURBO: reg |= (1 << LED1) | (1 << LED2) | (1 << LED3); break;
+    }
+    PORTB = reg;
+    leds_now = mode;
+}
+#else
 static void set_leds(uint8_t mode) {
     uint8_t reg = PORTB;
     reg &= ~((1 << LED1) | (1 << LED2));
@@ -228,6 +267,7 @@ static void set_leds(uint8_t mode) {
     PORTB = reg;
     leds_now = mode;
 }
+#endif
 
 void leds_restore() {
     set_leds(leds_mode);
@@ -371,11 +411,20 @@ static inline BatLevel_t to_bat_level(uint8_t bat) {
 static inline bool check_bat_level() { 
     uint8_t b = get_battery();
 
+#if HARDWARE==6
     switch(leds_now) {
-        case LEDS_MODE_LOW:  b += bat_level_delta; break;
-        case LEDS_MODE_HIGH: b += bat_level_delta; /* continue */ 
-        case LEDS_MODE_MED:  b += bat_level_delta*2; break;
+        case LEDS_MODE_LOW:   b += bat_level_delta; break;
+        case LEDS_MODE_TURBO: b += bat_level_delta*2; /* continue */
+        case LEDS_MODE_HIGH:  b += bat_level_delta;   /* continue */
+        case LEDS_MODE_MED:   b += bat_level_delta*2; break;
     }
+#else
+    switch(leds_now) {
+        case LEDS_MODE_LOW:   b += bat_level_delta; break;
+        case LEDS_MODE_HIGH:  b += bat_level_delta;   /* continue */
+        case LEDS_MODE_MED:   b += bat_level_delta*2; break;
+    }
+#endif
 
     uart_send_str("b");
     uart_send_hex(b);
@@ -399,7 +448,7 @@ static inline void process_beacon(uint8_t count) {
     if(count)
         set_leds(LEDS_MODE_OFF);
     else
-        set_leds(LEDS_MODE_HIGH);
+        set_leds(LEDS_MODE_NORMAL_MAX);
 }
 
 static inline void process_strobe(uint8_t count) {
@@ -407,7 +456,7 @@ static inline void process_strobe(uint8_t count) {
     if(count)
         set_leds(LEDS_MODE_OFF);
     else
-        set_leds(LEDS_MODE_HIGH);
+        set_leds(LEDS_MODE_NORMAL_MAX);
 }
 
 static inline void process_sos(uint8_t count) {
@@ -420,7 +469,7 @@ static inline void process_sos(uint8_t count) {
     pos = (pos + 1) & 0x1F;
 
     if(v)
-        set_leds(LEDS_MODE_HIGH);
+        set_leds(LEDS_MODE_NORMAL_MAX);
     else
         set_leds(LEDS_MODE_OFF);
 }
