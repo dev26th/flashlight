@@ -6,7 +6,7 @@ Public domain - see file UNLICENSE.
 
 Status: **beta**.
 
-##Hardware
+## Hardware
 
 Designed for power button (not tact one) and one Li-Ion cell. Should work with ATtiny45 and ATtiny85, but untested.
 
@@ -19,7 +19,7 @@ Designed for power button (not tact one) and one Li-Ion cell. Should work with A
 
 *Note:* well-known AK-47A driver can be easy modified for this schematic. Just cut connection to Q3 and connect it with R5 and solder R6+C2. [AK-47A Schematic](docs/AK-47A.png) .
 
-##Handling
+## Handling
 
 Four main modes: 3.5mA, 0.35A, 0.7A, 1.05A. Quick off-on (half-click) to switch to next mode. Remembers last selected mode.
 
@@ -27,15 +27,15 @@ Quick double off-on to go to special modes: beacon, strobe and SOS. Quick double
 
 Will go to 0.35A mode automatically and blink periodically if battery is low (< 3.5V), then go to minimum mode (< 3.2V) and later power off when battery is empty (< 3.0V). But exact voltage may very for different chips.
 
-##Calibration
+## Calibration
 
 You can define your own battery low and empty levels, if your recompile the firmware with ENABLE_CALIBRATION=1 (for ATtiny13A you have to temporary disable all other features). Then:
 
-1. Switch the flashlight off. 
-2. Short PB2 to GND, to calibrate battery empty level. 
-3. Switch the flashlight on. It starts to blink. 
+1. Switch the flashlight off.
+2. Short PB2 to GND, to calibrate battery empty level.
+3. Switch the flashlight on. It starts to blink.
 4. Release the PB2. Flashlight blinks slower.
-5. Switch the flashlight off. 
+5. Switch the flashlight off.
 6. Short PB2 to VCC, to calibrate battery minimum, low level and the correction.
 7. Repeat steps 3-5.
 8. Calibration is done.
