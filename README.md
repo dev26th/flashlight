@@ -4,8 +4,6 @@ A firmware for a flashlight driver based on ATtiny13A.
 
 Public domain - see file UNLICENSE.
 
-Status: **beta**.
-
 ## Hardware
 
 Designed for power button (not tact one) and one Li-Ion cell. Should work with ATtiny45 and ATtiny85, but untested.
