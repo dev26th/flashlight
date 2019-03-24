@@ -15,7 +15,7 @@ Designed for power button (not tact one) and one Li-Ion cell. Should work with A
 - PB2 - divider 19k1 and 4k7 between VCC and GND (for battery monitoring); you can calibrate monitoring for other values (see below)
 - PB4 - resistor 1M and then ceramic capacitor 1u to GND (for off-time measurement)
 
-*Note:* well-known AK-47A driver can be easy modified for this schematic. Just cut connection to Q3 and connect it with R5 and solder R6+C2. [AK-47A Schematic](docs/AK-47A.png) .
+*Note:* well-known AK-47A driver can be easy modified for this schematic. Just cut connection to Q3 and connect it with pin 5 (PB0) and solder R6+C2. [AK-47A Schematic](docs/AK-47A.png) .
 
 ## Handling
 
@@ -47,12 +47,12 @@ Or write directly into EEPROM:
 
 Or just define your default values in code.
 
-##Programming
+## Programming
 
 Fuses (avrdude format):
 
 >-U lfuse:w:0x3a:m -U hfuse:w:0xff:m
 
-##Debugging
+## Debugging
 
 Set ENABLE_UART=1 (for ATtiny13A you have to temporary disable all other features), recompile and see the signal on PB3 (pin 2). 115200 baud.
